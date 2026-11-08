@@ -596,6 +596,7 @@ impl DataServer {
                 ping_time: req.get_ping_time(),
                 is_blocked: req.get_is_blocked(),
                 is_cached: req.get_is_cached(),
+                reply_ip: req.get_reply_ip(),
             };
             dns_log!(
                 LogLevel::DEBUG,

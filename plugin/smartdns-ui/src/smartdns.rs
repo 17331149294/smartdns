@@ -452,6 +452,7 @@ pub trait DnsRequest: Send + Sync {
     fn get_ping_time(&self) -> f64;
     fn get_is_blocked(&self) -> bool;
     fn get_is_cached(&self) -> bool;
+    fn get_reply_ip(&self) -> String;
     fn get_remote_mac(&self) -> [u8; 6];
     fn get_remote_addr(&self) -> String;
     fn get_local_addr(&self) -> String;
@@ -538,6 +539,26 @@ impl DnsRequest for DnsRequest_C {
 
     fn get_is_cached(&self) -> bool {
         unsafe { smartdns_c::dns_server_request_is_cached(self.request) != 0 }
+    }
+
+    fn get_reply_ip(&self) -> String {
+        let mut buf = [0u8; 1024];
+        let ret = unsafe {
+            smartdns_c::dns_server_request_get_reply_ip(
+                self.request,
+                buf.as_mut_ptr() as *mut c_char,
+                buf.len() as i32,
+            )
+        };
+        if ret <= 0 {
+            return String::new();
+        }
+
+        unsafe {
+            CStr::from_ptr(buf.as_ptr() as *const c_char)
+                .to_string_lossy()
+                .into_owned()
+        }
     }
 
     fn get_remote_mac(&self) -> [u8; 6] {

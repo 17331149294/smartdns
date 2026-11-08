@@ -266,6 +266,7 @@ fn test_rest_api_get_domain() {
         let mut request = TestDnsRequest::new();
         request.domain = format!("{}.com", i);
         request.id = i as u16;
+        request.reply_ip = format!("192.0.2.{}, 198.51.100.{}", i % 254 + 1, i % 254 + 1);
         assert!(server.send_test_dnsrequest(request).is_ok());
     }
 
@@ -291,6 +292,7 @@ fn test_rest_api_get_domain() {
     assert_eq!(result.len(), 10);
     assert_eq!(result[0].id, 101);
     assert_eq!(result[0].domain, "100.com");
+    assert_eq!(result[0].reply_ip, "192.0.2.101, 198.51.100.101");
 }
 
 #[test]

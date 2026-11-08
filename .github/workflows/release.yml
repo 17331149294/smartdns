@@ -9,9 +9,11 @@ on:
   schedule:
     - cron: '0 18 * * *' # Daily at 18:00 UTC (02:00 AM Beijing Time)
   workflow_dispatch: # Allows manual trigger from GitHub UI for testing
+  workflow_call: # Reused by manual-build.yml (manual cloud build)
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   check_updates:
@@ -418,5 +420,79 @@ jobs:
           prerelease: true
           files: release-assets/*
           overwrite_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Runs AFTER the cross-compiled binaries/packages are built.
+  # Publishes the container image to GitHub Packages (ghcr.io) and stores a
+  # docker-save archive in the "packages" artifact / release assets.
+  docker-package:
+    name: Package Docker Container
+    needs: [check_updates, build-release]
+    if: needs.check_updates.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push container to GitHub Packages
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          # amd64 only: the Dockerfile compiles OpenSSL/Rust/C from source,
+          # emulating arm64 with QEMU would make the manual build extremely slow.
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+            ghcr.io/${{ github.repository }}:${{ github.run_id }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save container archive into packages/
+        run: |
+          mkdir -p packages
+          IMAGE="ghcr.io/${{ github.repository }}:${{ github.sha }}"
+          docker pull "$IMAGE"
+          docker save "$IMAGE" | gzip > "packages/smartdns-docker-${GITHUB_RUN_ID}.tar.gz"
+          ls -lh packages/
+
+      - name: Upload packages artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: packages/*
+          if-no-files-found: error
+
+      - name: Attach container archive to nightly release
+        if: github.event_name != 'release'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: nightly
+          files: packages/*
+          overwrite_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attach container archive to published release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v3
+        with:
+          files: packages/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

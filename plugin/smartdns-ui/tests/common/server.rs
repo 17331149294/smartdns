@@ -60,6 +60,7 @@ pub struct TestDnsRequest {
     pub ping_time: f64,
     pub is_blocked: bool,
     pub is_cached: bool,
+    pub reply_ip: String,
     pub remote_mac: [u8; 6],
     pub remote_addr: String,
     pub local_addr: String,
@@ -83,6 +84,7 @@ impl TestDnsRequest {
             ping_time: -0.1 as f64,
             is_blocked: false,
             is_cached: false,
+            reply_ip: String::new(),
             remote_mac: [0; 6],
             remote_addr: "127.0.0.1".to_string(),
             local_addr: "127.0.0.1".to_string(),
@@ -137,6 +139,10 @@ impl DnsRequest for TestDnsRequest {
 
     fn get_is_cached(&self) -> bool {
         self.is_cached
+    }
+
+    fn get_reply_ip(&self) -> String {
+        self.reply_ip.clone()
     }
 
     fn get_remote_mac(&self) -> [u8; 6] {
@@ -394,6 +400,7 @@ impl TestServer {
             ping_time: -0.1 as f64,
             is_blocked: false,
             is_cached: false,
+            reply_ip: String::new(),
         }
     }
 

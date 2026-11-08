@@ -34,6 +34,8 @@
 #include "smartdns/dns_plugin.h"
 #include "smartdns/dns_stats.h"
 
+#include <arpa/inet.h>
+
 int _dns_server_has_bind_flag(struct dns_request *request, uint32_t flag)
 {
 	if (request->server_flags & flag) {
@@ -459,6 +461,99 @@ int dns_server_request_get_rcode(struct dns_request *request)
 	}
 
 	return request->rcode;
+}
+
+static int _dns_server_request_append_reply_ip(char *buf, int buf_len, int *total_len,
+											   char added[][MAX_IP_LEN], int *ip_num,
+											   const unsigned char *addr, int addr_type)
+{
+	char ip_str[MAX_IP_LEN] = {0};
+	const char *sep = (*ip_num > 0) ? ", " : "";
+	int i = 0;
+	int len = 0;
+
+	if (*ip_num >= MAX_IP_NUM) {
+		return 0;
+	}
+
+	if (addr_type == DNS_T_AAAA) {
+		if (inet_ntop(AF_INET6, addr, ip_str, sizeof(ip_str)) == NULL) {
+			return -1;
+		}
+	} else if (addr_type == DNS_T_A) {
+		snprintf(ip_str, sizeof(ip_str), "%d.%d.%d.%d", addr[0], addr[1], addr[2], addr[3]);
+	} else {
+		return 0;
+	}
+
+	for (i = 0; i < *ip_num; i++) {
+		if (strncmp(added[i], ip_str, MAX_IP_LEN) == 0) {
+			return 0;
+		}
+	}
+
+	len = snprintf(buf + *total_len, buf_len - *total_len, "%s%s", sep, ip_str);
+	if (len < 0 || len >= buf_len - *total_len) {
+		return -1;
+	}
+
+	*total_len += len;
+	safe_strncpy(added[*ip_num], ip_str, MAX_IP_LEN);
+	(*ip_num)++;
+	return 0;
+}
+
+int dns_server_request_get_reply_ip(struct dns_request *request, char *buf, int buf_len)
+{
+	char added[MAX_IP_NUM][MAX_IP_LEN] = {{0}};
+	struct dns_ip_address *addr_map = NULL;
+	struct hlist_node *tmp = NULL;
+	unsigned long bucket = 0;
+	int ip_num = 0;
+	int total_len = 0;
+	int qtype = 0;
+
+	if (request == NULL || buf == NULL || buf_len <= 0) {
+		return -1;
+	}
+
+	buf[0] = '\0';
+	qtype = request->qtype;
+	if (qtype != DNS_T_A && qtype != DNS_T_AAAA) {
+		return 0;
+	}
+
+	if (request->rcode != DNS_RC_NOERROR || _dns_server_is_return_soa(request)) {
+		return 0;
+	}
+
+	pthread_mutex_lock(&request->ip_map_lock);
+
+	/* The selected (fastest) address is put first. */
+	if (request->has_ip) {
+		_dns_server_request_append_reply_ip(buf, buf_len, &total_len, added, &ip_num,
+										   request->ip_addr, qtype);
+	}
+
+	/* Include every A/AAAA answer gathered from upstream servers. */
+	hash_for_each_safe(request->ip_map, bucket, tmp, addr_map, node)
+	{
+		if (addr_map->addr_type != qtype) {
+			continue;
+		}
+
+		if (ip_num >= MAX_IP_NUM) {
+			break;
+		}
+
+		if (_dns_server_request_append_reply_ip(buf, buf_len, &total_len, added, &ip_num,
+												addr_map->ip_addr, addr_map->addr_type) < 0) {
+			break;
+		}
+	}
+	pthread_mutex_unlock(&request->ip_map_lock);
+
+	return ip_num;
 }
 
 void dns_server_request_get(struct dns_request *request)

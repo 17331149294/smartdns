@@ -98,6 +98,8 @@ pub struct DomainData {
     pub ping_time: f64,
     pub is_blocked: bool,
     pub is_cached: bool,
+    /// Resolved IP addresses of this query, comma separated (multiple A/AAAA answers possible).
+    pub reply_ip: String,
 }
 
 #[derive(Debug, Clone)]
@@ -204,7 +206,7 @@ impl DB {
     pub fn new() -> Self {
         DB {
             conn: Mutex::new(None),
-            version: 10000, /* x: major version, xx: minor version, xx: patch version */
+            version: 10001, /* x: major version, xx: minor version, xx: patch version */
             query_plan: std::env::var("SMARTDNS_DEBUG_SQL").is_ok(),
         }
     }
@@ -222,7 +224,8 @@ impl DB {
                 query_time INTEGER NOT NULL,
                 ping_time REAL NOT NULL,
                 is_blocked INTEGER DEFAULT 0,
-                is_cached INTEGER DEFAULT 0
+                is_cached INTEGER DEFAULT 0,
+                reply_ip TEXT NOT NULL DEFAULT ''
             )",
             [],
         )?;
@@ -307,19 +310,36 @@ impl DB {
             [],
         )?;
 
-        conn.execute(
-            "INSERT INTO schema_version (version) VALUES (?)",
-            [self.version],
-        )?;
-
         Ok(())
     }
 
-    fn migrate_db(&self, _conn: &Connection) -> Result<(), Box<dyn Error>> {
-        return Err(
-            "Currently Not Support Migrate Database, Please Backup DB File, And Restart Server."
-                .into(),
-        );
+    fn migrate_db(&self, conn: &Connection) -> Result<(), Box<dyn Error>> {
+        /*
+         * CREATE TABLE IF NOT EXISTS does not add columns to an existing
+         * database, so upgrade older databases in place with ALTER TABLE.
+         * Checking PRAGMA table_info keeps this migration idempotent.
+         */
+        let has_reply_ip = {
+            let mut stmt = conn.prepare("PRAGMA table_info(domain)")?;
+            let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            let mut found = false;
+            for column in columns {
+                if column? == "reply_ip" {
+                    found = true;
+                }
+            }
+            found
+        };
+
+        if !has_reply_ip {
+            dns_log!(LogLevel::INFO, "Migrating database: add domain.reply_ip column");
+            conn.execute(
+                "ALTER TABLE domain ADD COLUMN reply_ip TEXT NOT NULL DEFAULT ''",
+                [],
+            )?;
+        }
+
+        Ok(())
     }
 
     fn init_db(&self, conn: &Connection) -> Result<(), Box<dyn Error>> {
@@ -336,38 +356,40 @@ impl DB {
                 [],
                 |row| row.get(0),
             )
-            .unwrap_or(self.version);
+            .unwrap_or(0);
 
-        if current_version >= self.version {
-            self.create_table(conn)?;
-        } else {
-            self.migrate_db(conn)?;
+        self.create_table(conn)?;
+        self.migrate_db(conn)?;
+
+        if current_version < self.version {
+            conn.execute("DELETE FROM schema_version", [])?;
+            conn.execute(
+                "INSERT INTO schema_version (version) VALUES (?)",
+                [self.version],
+            )?;
         }
 
         Ok(())
     }
 
     pub fn open(&self, path: &str) -> Result<(), Box<dyn Error>> {
-        let ruconn: std::result::Result<Connection, rusqlite::Error> =
-            Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE);
-        let mut conn = self.conn.lock().unwrap();
-        if let Err(_) = ruconn {
-            let ruconn = Connection::open_with_flags(
-                path,
-                OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
-            )?;
+        let is_new_db = !std::path::Path::new(path).exists();
+        let ruconn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
+        )?;
 
-            let ret = self.init_db(&ruconn);
-            if let Err(e) = ret {
-                _ = ruconn.close();
-                fs::remove_file(path)?;
-                return Err(e);
+        /* Always run init_db: existing databases may need schema migration. */
+        if let Err(e) = self.init_db(&ruconn) {
+            _ = ruconn.close();
+            if is_new_db {
+                _ = fs::remove_file(path);
             }
-
-            *conn = Some(ruconn);
-        } else {
-            *conn = Some(ruconn.unwrap());
+            return Err(e);
         }
+
+        let mut conn = self.conn.lock().unwrap();
+        *conn = Some(ruconn);
 
         conn.as_ref()
             .unwrap()
@@ -641,8 +663,8 @@ impl DB {
 
         let mut stmt = tx.prepare(
             "INSERT INTO domain \
-            (timestamp, domain, domain_type, client, domain_group, reply_code, query_time, ping_time, is_blocked, is_cached) \
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)")?;
+            (timestamp, domain, domain_type, client, domain_group, reply_code, query_time, ping_time, is_blocked, is_cached, reply_ip) \
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)")?;
 
         for d in data {
             let ret = stmt.execute(rusqlite::params![
@@ -655,7 +677,8 @@ impl DB {
                 &d.query_time,
                 &d.ping_time,
                 &(d.is_blocked as i32),
-                &(d.is_cached as i32)
+                &(d.is_cached as i32),
+                &d.reply_ip
             ]);
 
             if let Err(e) = ret {
@@ -1350,7 +1373,7 @@ impl DB {
         let (sql_where, sql_order, mut sql_param) = Self::get_domain_sql_where(param)?;
 
         let mut sql = String::new();
-        sql.push_str("SELECT id, timestamp, domain, domain_type, client, domain_group, reply_code, query_time, ping_time, is_blocked, is_cached FROM domain");
+        sql.push_str("SELECT id, timestamp, domain, domain_type, client, domain_group, reply_code, query_time, ping_time, is_blocked, is_cached, reply_ip FROM domain");
 
         sql.push_str(sql_where.as_str());
         sql.push_str(sql_order.as_str());
@@ -1399,6 +1422,7 @@ impl DB {
                 ping_time: row.get(8)?,
                 is_blocked: row.get(9)?,
                 is_cached: row.get(10)?,
+                reply_ip: row.get(11)?,
             })
         });
 

@@ -1,0 +1,22 @@
+name: Manual Cloud Build (All Platforms + Docker)
+
+# Manual cloud build: cross-compiles every platform package exactly like
+# release.yml does, then builds/pushes the Docker container to GitHub
+# Packages (ghcr.io) and stores the image archive in the "packages" artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason / notes for this build'
+        required: false
+        default: 'manual build'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-all:
+    name: Build all platforms and container
+    uses: ./.github/workflows/release.yml
+    secrets: inherit

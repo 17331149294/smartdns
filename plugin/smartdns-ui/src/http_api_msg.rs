@@ -177,6 +177,8 @@ pub fn api_msg_parse_json_object_domain_value(
         ping_time: ping_time.unwrap(),
         is_blocked: is_blocked.unwrap(),
         is_cached: is_cached.unwrap(),
+        /* Older servers do not send reply_ip, keep parsing their responses. */
+        reply_ip: data["reply_ip"].as_str().unwrap_or("").to_string(),
     })
 }
 
@@ -198,6 +200,7 @@ pub fn api_msg_gen_json_object_domain(domain: &DomainData) -> serde_json::Value 
         "ping_time": domain.ping_time,
         "is_blocked": domain.is_blocked,
         "is_cached": domain.is_cached,
+        "reply_ip": domain.reply_ip,
     })
 }
 

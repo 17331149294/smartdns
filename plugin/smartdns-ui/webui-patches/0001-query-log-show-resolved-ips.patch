@@ -1,0 +1,73 @@
+diff --git a/public/locales/de-DE/translation.json b/public/locales/de-DE/translation.json
+index 3bb9290..f1a3334 100644
+--- a/public/locales/de-DE/translation.json
++++ b/public/locales/de-DE/translation.json
+@@ -24,6 +24,7 @@
+   "Daily Query Count": "Anfragen pro Tag",
+   "Domain": "Domäne",
+   "Type": "Typ",
++  "Resolved IP": "Aufgelöste IP",
+   "Client": "Client",
+   "Time": "Zeit",
+   "Ping": "Ping",
+diff --git a/public/locales/zh-CN/translation.json b/public/locales/zh-CN/translation.json
+index 5d1aeaa..d2da405 100644
+--- a/public/locales/zh-CN/translation.json
++++ b/public/locales/zh-CN/translation.json
+@@ -24,6 +24,7 @@
+     "Daily Query Count": "每日查询次数",
+     "Domain": "域名",
+     "Type": "类型",
++    "Resolved IP": "解析结果",
+     "Client": "客户端",
+     "Time": "时间",
+     "Ping": "Ping",
+diff --git a/src/components/dashboard/query-log/query-log-table.tsx b/src/components/dashboard/query-log/query-log-table.tsx
+index b1db060..b9e5476 100644
+--- a/src/components/dashboard/query-log/query-log-table.tsx
++++ b/src/components/dashboard/query-log/query-log-table.tsx
+@@ -98,6 +98,32 @@ function TableQueryLogs(): React.JSX.Element {
+           );
+         },
+       },
++      {
++        accessorKey: 'reply_ip',
++        header: t('Resolved IP'),
++        size: 300,
++        enableColumnActions: false,
++        enableColumnFilter: false,
++        muiTableBodyCellProps: {
++          sx: {
++            maxWidth: '300px',
++            whiteSpace: 'pre-line',
++            wordBreak: 'break-all',
++          },
++        },
++        Cell: ({ cell }) => {
++          const value = cell.getValue<string>();
++          if (!value || value.length === 0) {
++            return <span>N/A</span>;
++          }
++          const ips = value.split(',').map((ip) => ip.trim()).filter(Boolean);
++          return (
++            <Tooltip title={<span style={{ whiteSpace: 'pre-line' }}>{ips.join('\n')}</span>} arrow placement="top">
++              <span style={{ whiteSpace: 'pre-line' }}>{ips.join('\n')}</span>
++            </Tooltip>
++          );
++        },
++      },
+       {
+         accessorKey: 'client',
+         header: t('Client'),
+diff --git a/src/lib/backend/server.ts b/src/lib/backend/server.ts
+index ca20754..da22501 100644
+--- a/src/lib/backend/server.ts
++++ b/src/lib/backend/server.ts
+@@ -156,6 +156,7 @@ export interface DomainList {
+     ping_time: false,
+     query_time: number,
+     reply_code: number,
++    reply_ip: string,
+     timestamp: number,
+ }
+ 

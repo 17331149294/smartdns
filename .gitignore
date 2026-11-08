@@ -15,6 +15,9 @@ target
 # Release build files and scripts
 build-static.sh
 smartdns-*
+# Keep the WebUI patches shipped with this repository
+!plugin/smartdns-ui/
+!plugin/smartdns-ui/webui-patches/
 *.ipk
 *.apk
 *.deb

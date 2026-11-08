@@ -103,6 +103,18 @@ int dns_server_request_is_blocked(struct dns_request *request);
 
 int dns_server_request_is_cached(struct dns_request *request);
 
+/*
+ * Get the resolved IP addresses of a completed query, formatted as a
+ * comma separated string (e.g. "1.2.3.4, 5.6.7.8").
+ *
+ * Multiple A/AAAA addresses can be returned when upstream servers return
+ * more than one result. The fastest (selected) address is listed first.
+ *
+ * Returns the number of IP addresses written, 0 when there is no address
+ * (blocked / failed / non address query), or -1 on invalid arguments.
+ */
+int dns_server_request_get_reply_ip(struct dns_request *request, char *buf, int buf_len);
+
 void dns_server_request_get(struct dns_request *request);
 
 void dns_server_request_put(struct dns_request *request);

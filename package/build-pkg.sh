@@ -315,6 +315,25 @@ build_webpages()
 		return 1
 	fi
 
+	# Apply the WebUI patches shipped in this repository before building.
+	# (query log: show resolved IP addresses returned to the client)
+	WEBUI_PATCH_DIR="$CODE_DIR/plugin/smartdns-ui/webui-patches"
+	if [ -d "$WEBUI_PATCH_DIR" ]; then
+		for webui_patch in "$WEBUI_PATCH_DIR"/*.patch; do
+			[ -f "$webui_patch" ] || continue
+			if grep -q "reply_ip" "$SMARTDNS_WEBUI_SOURCE/src/lib/backend/server.ts" 2>/dev/null; then
+				echo "WebUI patch already applied: $webui_patch"
+				continue
+			fi
+			echo "Applying WebUI patch: $webui_patch"
+			(cd "$SMARTDNS_WEBUI_SOURCE" && patch -p1 --forward < "$webui_patch")
+			if [ $? -ne 0 ]; then
+				echo "Failed to apply WebUI patch: $webui_patch"
+				return 1
+			fi
+		done
+	fi
+
 	if [ -f "$SMARTDNS_WEBUI_SOURCE/out/index.html" ]; then
 		echo "smartdns-webui already built, skipping build."
 		return 0
